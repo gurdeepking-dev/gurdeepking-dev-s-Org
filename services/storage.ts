@@ -1,0 +1,252 @@
+
+import { StyleTemplate, AdminSettings, TransactionRecord, ApiKeyRecord, Coupon, SampleVideo } from '../types';
+import { logger } from './logger';
+import { supabase } from './supabase';
+import { imageStorage } from './imageStorage';
+
+const SESSION_KEY = 'styleswap_admin_session';
+const STYLES_CACHE_KEY = 'styleswap_styles_cache_v1';
+const VISIT_ID_KEY = 'styleswap_session_id';
+const LOCAL_CREDITS_PREFIX = 'styleswap_local_credits_';
+
+export const DEFAULT_ADMIN: AdminSettings = {
+  username: 'admin',
+  passwordHash: 'admin123',
+  geminiApiKeys: [],
+  coupons: [],
+  klingAccessKey: 'AdKKKaygptmMtkMee3T49HgNHLgrbdTm',
+  klingSecretKey: 'pfCCfPLtQHYmRtkCHdktNHgM8p8ATaQN',
+  videoSamples: [],
+  payment: {
+    gateway: 'Razorpay',
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    currency: process.env.DEFAULT_CURRENCY || 'INR',
+    enabled: true,
+    photoPrice: parseFloat(process.env.PHOTO_PRICE || '8'),
+    videoBasePrice: 20,
+    creditBundlePrice: 100,
+    creditBundleAmount: 100
+  },
+  tracking: {
+    metaPixelId: ''
+  }
+};
+
+export const storageService = {
+  async getStyles(forceRefresh = false): Promise<StyleTemplate[]> {
+    const cached = localStorage.getItem(STYLES_CACHE_KEY);
+    if (cached && !forceRefresh) {
+      this.fetchStylesFromDB().then(freshData => {
+        if (freshData.length > 0) {
+          localStorage.setItem(STYLES_CACHE_KEY, JSON.stringify(freshData));
+        }
+      });
+      return JSON.parse(cached);
+    }
+    return this.fetchStylesFromDB();
+  },
+
+  async fetchStylesFromDB(): Promise<StyleTemplate[]> {
+    try {
+      const { data, error } = await supabase
+        .from('styles')
+        .select('*')
+        .order('displayOrder', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      return [];
+    }
+  },
+
+  async saveStyle(style: StyleTemplate): Promise<void> {
+    const finalImageUrl = await imageStorage.uploadTemplateImage(style.imageUrl);
+    const { error } = await supabase.from('styles').upsert({
+      ...style,
+      imageUrl: finalImageUrl
+    });
+    if (error) throw error;
+    localStorage.removeItem(STYLES_CACHE_KEY);
+  },
+
+  async deleteStyle(id: string): Promise<void> {
+    const { error } = await supabase.from('styles').delete().eq('id', id);
+    if (error) throw error;
+    localStorage.removeItem(STYLES_CACHE_KEY);
+  },
+
+  async getAdminSettings(): Promise<AdminSettings> {
+    try {
+      const { data, error } = await supabase.from('settings').select('config').eq('id', 'global').single();
+      if (error || !data) {
+        return DEFAULT_ADMIN;
+      }
+      const dbConfig = data.config as AdminSettings;
+      return {
+        ...DEFAULT_ADMIN,
+        ...dbConfig,
+        payment: { ...DEFAULT_ADMIN.payment, ...dbConfig.payment },
+        tracking: { ...DEFAULT_ADMIN.tracking, ...dbConfig.tracking }
+      };
+    } catch (err) {
+      return DEFAULT_ADMIN;
+    }
+  },
+
+  async saveAdminSettings(settings: AdminSettings): Promise<void> {
+    const { error } = await supabase.from('settings').upsert({
+      id: 'global',
+      config: settings
+    });
+    if (error) throw error;
+  },
+
+  // Credits Management with Local Fallback
+  async getUserCredits(email: string): Promise<number> {
+    try {
+      const { data, error } = await supabase
+        .from('user_credits')
+        .select('amount')
+        .eq('email', email)
+        .single();
+      
+      if (error) {
+        // Fallback to local storage if table is missing or query fails
+        if (error.message?.includes('user_credits')) {
+          const local = localStorage.getItem(LOCAL_CREDITS_PREFIX + email);
+          return local ? parseInt(local, 10) : 0;
+        }
+        return 0;
+      }
+      return data?.amount || 0;
+    } catch (e) { 
+      const local = localStorage.getItem(LOCAL_CREDITS_PREFIX + email);
+      return local ? parseInt(local, 10) : 0;
+    }
+  },
+
+  async addCredits(email: string, amount: number): Promise<void> {
+    const current = await this.getUserCredits(email);
+    const newAmount = current + amount;
+
+    try {
+      const { error } = await supabase.from('user_credits').upsert({
+        email,
+        amount: newAmount
+      }, { onConflict: 'email' });
+      
+      if (error) {
+        // If Supabase fails (e.g. table missing), always keep local storage synced as a reliable mirror
+        localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+        if (!error.message?.includes('user_credits')) {
+          logger.error('Credits', 'Failed to add credits to cloud', error);
+        }
+      } else {
+        localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+      }
+    } catch (e) {
+      localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+    }
+  },
+
+  async deductCredit(email: string): Promise<boolean> {
+    const current = await this.getUserCredits(email);
+    if (current <= 0) return false;
+    const newAmount = current - 1;
+
+    try {
+      const { error } = await supabase.from('user_credits').update({
+        amount: newAmount
+      }).eq('email', email);
+
+      if (error) {
+        localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+        return true; // We allow local deduction even if cloud fails
+      }
+      localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+      return true;
+    } catch (e) {
+      localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
+      return true;
+    }
+  },
+
+  async getSampleVideos(): Promise<SampleVideo[]> {
+    const settings = await this.getAdminSettings();
+    return settings.videoSamples || [];
+  },
+
+  isAdminLoggedIn(): boolean {
+    return localStorage.getItem(SESSION_KEY) === 'true';
+  },
+
+  setAdminLoggedIn(val: boolean): void {
+    if (val) localStorage.setItem(SESSION_KEY, 'true');
+    else localStorage.removeItem(SESSION_KEY);
+  },
+
+  async saveTransaction(tx: TransactionRecord): Promise<void> {
+    try {
+      const { error } = await supabase.from('transactions').insert(tx);
+      if (error && error.message?.includes('render_status')) {
+        const { render_status, ...safeTx } = tx;
+        await supabase.from('transactions').insert(safeTx);
+      } else if (error) {
+        throw error;
+      }
+    } catch (e) {
+      logger.error('Storage', 'Transaction save failed', e);
+    }
+  },
+
+  async updateTransactionStatus(paymentId: string, status: Partial<TransactionRecord>): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('transactions')
+        .update(status)
+        .eq('razorpay_payment_id', paymentId);
+      if (error) {
+        if (error.message?.includes('render_status') || error.code === 'PGRST204') {
+          console.warn("[Storage] Skipping render_status update: Column missing in schema.");
+        } else {
+          logger.warn('Storage', 'Transaction update warning', error);
+        }
+      }
+    } catch (e) {}
+  },
+
+  async getTransactions(): Promise<TransactionRecord[]> {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  },
+
+  async logActivity(eventName: string, eventData: any = {}): Promise<void> {
+    let sessionId = localStorage.getItem(VISIT_ID_KEY);
+    if (!sessionId) {
+      sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      localStorage.setItem(VISIT_ID_KEY, sessionId);
+    }
+    
+    try {
+      const { error } = await supabase.from('user_activities').insert({
+        event_name: eventName,
+        event_data: eventData,
+        session_id: sessionId
+      });
+      if (error) {
+        // If logging fails (e.g. table missing), we don't spam errors
+        console.debug(`[Logging] Skipping cloud log: ${eventName}`);
+      }
+    } catch (err) {}
+  },
+
+  getCurrencySymbol(currency: string = 'INR'): string {
+    const symbols: Record<string, string> = { 'USD': '$', 'EUR': '€', 'GBP': '£', 'INR': '₹' };
+    return symbols[currency] || '₹';
+  }
+};
