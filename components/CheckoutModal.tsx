@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { CartItem, Coupon, AdminSettings } from '../types';
+import { CartItem, Coupon, AdminSettings, User } from '../types';
 import { storageService } from '../services/storage';
+import { authService } from '../services/authService';
 import { logger } from '../services/logger';
 
 interface CheckoutModalProps {
@@ -10,10 +11,14 @@ interface CheckoutModalProps {
   cart: CartItem[];
   onRemove: (id: string) => void;
   onComplete: (paymentId: string, paidItemIds: string[], referralCode?: string) => void;
+  user: User | null;
+  onUserUpdate: (user: User | null) => void;
 }
 
-const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, cart, onRemove, onComplete }) => {
-  const [email, setEmail] = useState('');
+const CheckoutModal: React.FC<CheckoutModalProps> = ({ 
+  isOpen, onClose, cart, onRemove, onComplete, user, onUserUpdate 
+}) => {
+  const [email, setEmail] = useState(user?.email || '');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AdminSettings | null>(null);
@@ -49,6 +54,34 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, cart, on
     const coupon = settings.coupons?.find(c => c.code === code && c.isActive);
     if (coupon) { setAppliedCoupon(coupon); setCouponError(null); }
     else { setAppliedCoupon(null); setCouponError("Invalid code"); }
+  };
+
+  const handlePayWithCredits = async () => {
+    if (!user) { setError("Please login to use credits."); return; }
+    if (user.credits < cart.length) {
+      setError(`You need ${cart.length} credits for this cart. You have ${user.credits}.`);
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      setError(null);
+      
+      // Deduct credits one by one or in bulk if supported
+      // For simplicity, we'll deduct the total amount
+      const success = await storageService.deductCredits(user.email, cart.length);
+      if (success) {
+        const newCredits = await authService.refreshUserCredits();
+        onUserUpdate({ ...user, credits: newCredits });
+        onComplete(`credits_${Date.now()}`, cart.map(i => i.id));
+      } else {
+        throw new Error("Failed to deduct credits");
+      }
+    } catch (err) {
+      logger.error('Checkout', 'Credit Payment Error', err);
+      setError("Credit payment failed. Please try again.");
+      setIsProcessing(false);
+    }
   };
 
   const handlePay = async () => {
@@ -150,9 +183,21 @@ const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, cart, on
           {error && <p className="text-xs text-red-500 font-bold text-center">{error}</p>}
         </div>
 
-        <button onClick={handlePay} disabled={isProcessing || (cart.length === 0 && !buyBundle)} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-30">
-          {isProcessing ? "Processing..." : `Pay Securely`}
-        </button>
+        <div className="grid grid-cols-1 gap-3">
+          <button onClick={handlePay} disabled={isProcessing || (cart.length === 0 && !buyBundle)} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all active:scale-95 disabled:opacity-30">
+            {isProcessing ? "Processing..." : `Pay with Money`}
+          </button>
+          
+          {user && cart.length > 0 && !buyBundle && (
+            <button 
+              onClick={handlePayWithCredits} 
+              disabled={isProcessing || user.credits < cart.length} 
+              className="w-full py-5 bg-rose-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-rose-700 transition-all active:scale-95 disabled:opacity-30 border-b-4 border-rose-800"
+            >
+              {isProcessing ? "Processing..." : `Pay with ${cart.length} Credits`}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

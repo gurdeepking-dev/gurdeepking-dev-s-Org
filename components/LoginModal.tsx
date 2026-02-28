@@ -46,6 +46,8 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLoginSuccess
       let errorMsg = err.message || "Authentication failed";
       if (errorMsg.includes('Invalid login credentials')) {
         errorMsg = "Incorrect email or password. Please try again or sign up if you don't have an account.";
+      } else if (errorMsg.includes('email rate limit exceeded')) {
+        errorMsg = "Too many requests. Please wait a few minutes before trying to reset your password again.";
       }
       setMessage({ text: errorMsg, type: 'error' });
     } finally {

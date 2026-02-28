@@ -3,6 +3,7 @@ import { StyleTemplate, AdminSettings, TransactionRecord, ApiKeyRecord, Coupon, 
 import { logger } from './logger';
 import { supabase } from './supabase';
 import { imageStorage } from './imageStorage';
+import { SAMPLE_STYLES } from './seedData';
 
 const SESSION_KEY = 'styleswap_admin_session';
 const STYLES_CACHE_KEY = 'styleswap_styles_cache_v1';
@@ -34,28 +35,61 @@ export const DEFAULT_ADMIN: AdminSettings = {
 };
 
 export const storageService = {
+  async seedStyles(): Promise<void> {
+    try {
+      console.log('[Storage] Seeding sample styles...');
+      for (const style of SAMPLE_STYLES) {
+        await this.saveStyle(style);
+      }
+      console.log('[Storage] Seeding completed.');
+    } catch (err) {
+      console.error('[Storage] Seeding failed:', err);
+      throw err;
+    }
+  },
+
   async getStyles(forceRefresh = false): Promise<StyleTemplate[]> {
     const cached = localStorage.getItem(STYLES_CACHE_KEY);
     if (cached && !forceRefresh) {
+      // Background refresh
       this.fetchStylesFromDB().then(freshData => {
-        if (freshData.length > 0) {
+        if (freshData && freshData.length > 0) {
           localStorage.setItem(STYLES_CACHE_KEY, JSON.stringify(freshData));
         }
-      });
+      }).catch(err => logger.error('Storage', 'Background styles refresh failed', err));
+      
       return JSON.parse(cached);
     }
-    return this.fetchStylesFromDB();
+    
+    const freshData = await this.fetchStylesFromDB();
+    if (freshData && freshData.length > 0) {
+      localStorage.setItem(STYLES_CACHE_KEY, JSON.stringify(freshData));
+    }
+    return freshData;
   },
 
   async fetchStylesFromDB(): Promise<StyleTemplate[]> {
     try {
+      console.log('[Storage] Fetching styles from Supabase...');
       const { data, error } = await supabase
         .from('styles')
         .select('*')
         .order('displayOrder', { ascending: true });
-      if (error) throw error;
+      
+      if (error) {
+        if (error.code === '42P01') {
+          console.error('[Storage] Table "styles" does not exist in Supabase. Please create it in your dashboard.');
+        } else {
+          console.error('[Storage] Supabase error fetching styles:', error);
+        }
+        logger.error('Storage', 'Fetch styles error', error);
+        throw error;
+      }
+      console.log('[Storage] Styles fetched successfully:', data?.length || 0);
       return data || [];
     } catch (err) {
+      console.error('[Storage] Catch block error fetching styles:', err);
+      logger.error('Storage', 'Failed to fetch styles from DB', err);
       return [];
     }
   },
@@ -151,19 +185,19 @@ export const storageService = {
   },
 
   async deductCredit(email: string): Promise<boolean> {
+    return this.deductCredits(email, 1);
+  },
+
+  async deductCredits(email: string, amount: number): Promise<boolean> {
     const current = await this.getUserCredits(email);
-    if (current <= 0) return false;
-    const newAmount = current - 1;
+    if (current < amount) return false;
+    const newAmount = current - amount;
 
     try {
       const { error } = await supabase.from('user_credits').update({
         amount: newAmount
       }).eq('email', email);
 
-      if (error) {
-        localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
-        return true; // We allow local deduction even if cloud fails
-      }
       localStorage.setItem(LOCAL_CREDITS_PREFIX + email, newAmount.toString());
       return true;
     } catch (e) {

@@ -155,7 +155,7 @@ const Header: React.FC<HeaderProps> = ({
                   </div>
                   <button onClick={() => handleNav('hot')} className={`w-full text-left px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${currentView === 'hot' ? 'bg-rose-50 text-rose-600' : 'text-slate-600 hover:bg-rose-50'}`}>💖 Studio Hot</button>
                   <button onClick={() => handleNav('video')} className={`w-full text-left px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${currentView === 'video' ? 'bg-rose-50 text-rose-600' : 'text-slate-600 hover:bg-rose-50'}`}>🎬 AI Cinema</button>
-                  <button onClick={() => handleNav('photo')} className={`w-full text-left px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${currentView === 'photo' ? 'bg-rose-50 text-rose-600' : 'text-slate-600 hover:bg-rose-50'}`}>🖼️ HD Enhancer</button>
+                  <button onClick={() => handleNav('photo')} className={`w-full text-left px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${currentView === 'photo' ? 'bg-rose-50 text-rose-600' : 'text-slate-600 hover:bg-rose-50'}`}>🪄 Magic Studio</button>
                   <button onClick={() => handleNav('aitools')} className={`w-full text-left px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${currentView === 'aitools' ? 'bg-rose-50 text-rose-600' : 'text-slate-600 hover:bg-rose-50'}`}>🛠️ AI Toolbelt</button>
                   
                   {user && (

@@ -45,27 +45,46 @@ export const geminiService = {
 
     const finalPrompt = `${facialInstruction}\n\n${styleInstruction}\n\nApply style only to clothes and background. KEEP FACES 100% SAME AS ORIGINAL.`;
 
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image', 
-        contents: {
-          parts: [
-            { inlineData: { data: baseImageBase64.split(',')[1], mimeType: 'image/png' } },
-            { text: finalPrompt }
-          ]
-        }
-      });
+    const maxRetries = 3;
+    let lastError: any = null;
 
-      const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
-      if (part && part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image', 
+          contents: {
+            parts: [
+              { inlineData: { data: baseImageBase64.split(',')[1], mimeType: 'image/png' } },
+              { text: finalPrompt }
+            ]
+          }
+        });
+
+        const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
+        if (part && part.inlineData) {
+          return `data:image/png;base64,${part.inlineData.data}`;
+        }
+        
+        throw new Error("Could not create image. Please try a simpler description.");
+      } catch (error: any) {
+        lastError = error;
+        const isRateLimit = error?.message?.includes('429') || error?.status === 'RESOURCE_EXHAUSTED';
+        
+        if (isRateLimit && attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
+          logger.info('GeminiService', `Rate limited. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        logger.error('GeminiService', 'Style generation failed', error);
+        if (isRateLimit) {
+          throw new Error("AI is currently busy due to high demand. Please wait 30 seconds and try again.");
+        }
+        throw error;
       }
-      
-      throw new Error("Could not create image. Please try a simpler description.");
-    } catch (error: any) {
-      logger.error('GeminiService', 'Style generation failed', error);
-      throw error;
     }
+    throw lastError;
   },
 
   /**
@@ -128,7 +147,26 @@ export const geminiService = {
         };
       }
 
-      let operation = await ai.models.generateVideos(requestPayload);
+      let operation: any = null;
+      let videoAttempt = 0;
+      const maxVideoRetries = 2;
+
+      while (videoAttempt <= maxVideoRetries) {
+        try {
+          operation = await ai.models.generateVideos(requestPayload);
+          break;
+        } catch (err: any) {
+          const isRateLimit = err?.message?.includes('429') || err?.status === 'RESOURCE_EXHAUSTED';
+          if (isRateLimit && videoAttempt < maxVideoRetries) {
+            videoAttempt++;
+            const delay = videoAttempt * 5000;
+            if (onStatus) onStatus(`AI busy, retrying in ${delay/1000}s...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+          throw err;
+        }
+      }
 
       let steps = 0;
       while (!operation.done) {

@@ -352,7 +352,7 @@ const VideoView: React.FC<VideoViewProps> = ({ prefill, onClearPrefill }) => {
         </div>
       </div>
 
-      {videoSamples.length > 0 && (
+      {videoSamples.length > 0 ? (
         <section className="space-y-8">
           <div className="text-center space-y-2">
             <h3 className="text-3xl font-black text-slate-800 serif italic">Popular Styles</h3>
@@ -373,6 +373,11 @@ const VideoView: React.FC<VideoViewProps> = ({ prefill, onClearPrefill }) => {
               </div>
             ))}
           </div>
+        </section>
+      ) : (
+        <section className="py-20 text-center space-y-4 bg-[#0a0a0a] rounded-[3rem] border-2 border-dashed border-white/5">
+          <div className="text-4xl">🎬</div>
+          <p className="text-sm font-black text-slate-500 uppercase tracking-widest italic">No cinema presets available yet.</p>
         </section>
       )}
 

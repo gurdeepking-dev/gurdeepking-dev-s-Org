@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import ValentineView from './components/ValentineView';
 import PhotoView from './components/PhotoView';
+import UserView from './components/UserView';
 import VideoView from './components/VideoView';
 import AIToolsView from './components/AIToolsView';
 import AdminView from './components/AdminView';
@@ -16,6 +17,7 @@ import AffiliateDashboard from './components/AffiliateDashboard';
 import UserDashboard from './components/UserDashboard';
 import ResetPasswordView from './components/ResetPasswordView';
 import LoginModal from './components/LoginModal';
+import CheckoutModal from './components/CheckoutModal';
 import { CartItem, ViewType, User } from './types';
 import { analytics } from './services/analytics';
 import { storageService } from './services/storage';
@@ -28,6 +30,7 @@ const App: React.FC = () => {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  const [lastPurchasedIds, setLastPurchasedIds] = useState<string[]>([]);
   
   // State for pre-filling video studio from other views
   const [videoPrefill, setVideoPrefill] = useState<{ photo: string, prompt: string, isVerified?: boolean } | null>(null);
@@ -100,6 +103,23 @@ const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handlePaymentComplete = async (paymentId: string, items: string[], referralCode?: string) => {
+    await storageService.saveTransaction({
+      razorpay_payment_id: paymentId,
+      user_email: user?.email || 'guest@example.com',
+      amount: cart.reduce((s, i) => s + i.price, 0),
+      items: items,
+      status: 'captured',
+      referral_code: referralCode
+    });
+
+    const updatedCredits = await authService.refreshUserCredits();
+    setUser(user ? { ...user, credits: updatedCredits } : null);
+    setLastPurchasedIds([...items]);
+    setCart([]);
+    setShowCheckoutModal(false);
+  };
+
   const renderContent = () => {
     switch(currentView) {
       case 'admin': return <AdminView />;
@@ -109,7 +129,22 @@ const App: React.FC = () => {
       case 'privacy': return <Privacy />;
       case 'refund': return <Refund />;
       case 'shipping': return <Shipping />;
-      case 'photo': return <PhotoView addToCart={addToCart} />;
+      case 'photo': 
+        return (
+          <UserView 
+            cart={cart}
+            user={user}
+            addToCart={addToCart}
+            showCheckout={showCheckoutModal}
+            setShowCheckout={setShowCheckoutModal}
+            removeFromCart={removeFromCart}
+            onLoginRequired={() => setShowLoginModal(true)}
+            onUserUpdate={(u) => setUser(u)}
+            onAnimate={handleAnimate}
+            setCart={setCart}
+            lastPurchasedIds={lastPurchasedIds}
+          />
+        );
       case 'video': 
         return (
           <VideoView 
@@ -130,6 +165,7 @@ const App: React.FC = () => {
           onLoginRequired={() => setShowLoginModal(true)}
           onUserUpdate={(u) => setUser(u)}
           onAnimate={handleAnimate}
+          lastPurchasedIds={lastPurchasedIds}
         />;
       case 'affiliate': 
         return user ? <AffiliateDashboard user={user} /> : <ValentineView 
@@ -143,6 +179,7 @@ const App: React.FC = () => {
           onLoginRequired={() => setShowLoginModal(true)}
           onUserUpdate={(u) => setUser(u)}
           onAnimate={handleAnimate}
+          lastPurchasedIds={lastPurchasedIds}
         />;
       case 'hot':
       default:
@@ -158,6 +195,7 @@ const App: React.FC = () => {
             onLoginRequired={() => setShowLoginModal(true)}
             onUserUpdate={(u) => setUser(u)}
             onAnimate={handleAnimate}
+            lastPurchasedIds={lastPurchasedIds}
           />
         );
     }
@@ -186,7 +224,7 @@ const App: React.FC = () => {
             {[
               { id: 'hot', label: 'Studio Hot', icon: '🔥' },
               { id: 'video', label: 'Cinema', icon: '🎬' },
-              { id: 'photo', label: 'Enhancer', icon: '🖼️' },
+              { id: 'photo', label: 'Magic Studio', icon: '🪄' },
               { id: 'aitools', label: 'Toolbelt', icon: '🛠️' }
             ].map((tab) => (
               <button
@@ -252,6 +290,16 @@ const App: React.FC = () => {
           setUser(u);
           analytics.track('Login', { method: 'email' });
         }}
+      />
+
+      <CheckoutModal 
+        isOpen={showCheckoutModal}
+        onClose={() => setShowCheckoutModal(false)}
+        cart={cart}
+        onRemove={removeFromCart}
+        onComplete={handlePaymentComplete}
+        user={user}
+        onUserUpdate={(u) => setUser(u)}
       />
     </div>
   );

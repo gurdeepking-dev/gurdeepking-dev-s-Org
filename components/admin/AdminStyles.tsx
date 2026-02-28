@@ -93,7 +93,28 @@ const AdminStyles: React.FC = () => {
       <div className="bg-white p-6 sm:p-10 rounded-[2rem] sm:rounded-[3rem] border border-slate-100 shadow-xl space-y-8">
         <div className="flex justify-between items-center">
            <h3 className="text-2xl font-black text-slate-800 tracking-tighter uppercase">Art Styles Manager</h3>
-           {form.id && <button onClick={resetForm} className="text-[10px] font-black uppercase text-rose-500 bg-rose-50 px-4 py-2 rounded-xl">Cancel Edit</button>}
+           <div className="flex gap-2">
+             <button 
+               onClick={async () => {
+                 if(confirm('This will add sample styles to your database. Continue?')) {
+                   setIsSaving(true);
+                   try {
+                     await storageService.seedStyles();
+                     load();
+                     alert('Sample styles added successfully!');
+                   } catch (err) {
+                     alert('Seeding failed. Check console for errors.');
+                   } finally {
+                     setIsSaving(false);
+                   }
+                 }
+               }}
+               className="text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 px-4 py-2 rounded-xl hover:bg-indigo-100 transition-all"
+             >
+               Seed Samples 🚀
+             </button>
+             {form.id && <button onClick={resetForm} className="text-[10px] font-black uppercase text-rose-500 bg-rose-50 px-4 py-2 rounded-xl">Cancel Edit</button>}
+           </div>
         </div>
 
         <form onSubmit={handleSave} className="space-y-6">
